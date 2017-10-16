@@ -131,25 +131,32 @@ const (
 
 func mkErr(resp *http.Response) error {
 	data, err := ioutil.ReadAll(resp.Body)
+	var msgBody string
 	if err != nil {
-		return err
+		msgBody = fmt.Sprintf("couldn't read message body: %v")
 	}
 	logResponse(resp, data)
 	msg := &b2types.ErrorMessage{}
 	if err := json.Unmarshal(data, msg); err != nil {
-		return err
+		if msgBody != "" {
+			msgBody = fmt.Sprintf("couldn't read message body: %v")
+		}
+	}
+	if msgBody == "" {
+		msgBody = msg.Msg
 	}
 	var retryAfter int
 	retry := resp.Header.Get("Retry-After")
 	if retry != "" {
 		r, err := strconv.ParseInt(retry, 10, 64)
 		if err != nil {
-			return err
+			r = 0
+			blog.V(1).Infof("couldn't parse retry-after header %q: %v", retry, err)
 		}
 		retryAfter = int(r)
 	}
 	return b2err{
-		msg:    msg.Msg,
+		msg:    msgBody,
 		retry:  retryAfter,
 		code:   resp.StatusCode,
 		method: resp.Request.Header.Get("X-Blazer-Method"),
@@ -1038,7 +1045,7 @@ func mkRange(offset, size int64) string {
 
 // DownloadFileByName wraps b2_download_file_by_name.
 func (b *Bucket) DownloadFileByName(ctx context.Context, name string, offset, size int64) (*FileReader, error) {
-	uri := fmt.Sprintf("%s/file/%s/%s", b.b2.downloadURI, b.Name, name)
+	uri := fmt.Sprintf("%s/file/%s/%s", b.b2.downloadURI, b.Name, escape(name))
 	req, err := http.NewRequest("GET", uri, nil)
 	if err != nil {
 		return nil, err
